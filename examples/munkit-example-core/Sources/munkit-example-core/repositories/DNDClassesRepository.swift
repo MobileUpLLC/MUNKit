@@ -25,7 +25,7 @@ public actor DNDClassesRepository {
     }
 
     private func createDNDClassesListReplica() async {
-        self.dndClassesListReplica = await ReplicasHolder.shared.getReplica(
+        self.dndClassesListReplica = await ReplicasHolder.shared.getSingleReplica(
             name: "DNDClassesListReplica",
             settings: .init(
                 staleTime: 10,

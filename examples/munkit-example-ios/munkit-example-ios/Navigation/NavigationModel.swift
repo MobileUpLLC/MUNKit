@@ -21,7 +21,7 @@ class NavigationModel {
         guard path.count < oldPath.count else {
             return
         }
-        let actionsAfterPopKey = path.count + 1
+        let actionsAfterPopKey = oldPath.count
         actionsAfterPop[actionsAfterPopKey]?()
         actionsAfterPop.removeValue(forKey: actionsAfterPopKey)
     }

@@ -11,18 +11,19 @@ import Foundation
 
 let tokenProvider = AccessTokenProviderAndRefresher()
 let networkService = MUNNetworkService<DNDAPITarget>()
-let repository = DNDClassesRepository(networkService: networkService)
-let replica = await repository.getDNDClassesListReplica()
-let observer1 = await Observer(name: "observer1", replica: replica)
+MUNLogger.setupLogger(Logger())
+
+let repository = DNDMonstersRepository(networkService: networkService)
+
+let observer1 = await Observer(
+    name: "OBSERVER_1",
+    monstersListReplica: await repository.getDNDMonstersListReplica(),
+    monstersReplica: await repository.getDNDMonstersReplica()
+)
 
 Task {
     try await Task.sleep(for: .seconds(1))
-    observer1.activityStream.continuation.yield(true)
-}
-
-Task {
-    try await Task.sleep(for: .seconds(2))
-    observer1.activityStream.continuation.yield(false)
+    await observer1.activityStreams.forEach { $0.continuation.yield(true) }
 }
 
 try await _Concurrency.Task.sleep(for: .seconds(20))

@@ -11,16 +11,17 @@ public protocol SingleReplica<T>: Actor {
     associatedtype T: Sendable
 
     var name: String { get }
+    var currentState: SingleReplicaState<T> { get }
 
     init(
         name: String,
-        settings: ReplicaSettings,
-        storage: (any ReplicaStorage<T>)?,
+        settings: SingleReplicaSettings,
+        storage: (any SingleReplicaStorage<T>)?,
         fetcher: @Sendable @escaping () async throws -> T
     )
 
     /// Starts observing the replica's state.
-    func observe(activityStream: AsyncStream<Bool>) async -> ReplicaObserver<T>
+    func observe(activityStream: AsyncStream<Bool>) async -> SingleReplicaObserver<T>
 
     /// Fetches fresh data from the network.
     /// - Note: Does not trigger a new request if one is already in progress.

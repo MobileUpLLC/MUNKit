@@ -11,6 +11,8 @@ import Foundation
 
 public enum DNDAPITarget {
     case classes
+    case monsters(challengeRatings: [Double]?)
+    case monster(_ index: String)
 }
 
 extension DNDAPITarget: MUNAPITarget {
@@ -28,28 +30,34 @@ extension DNDAPITarget: MUNAPITarget {
 
     private func getParameters() -> [String: Any] {
         switch self {
-        case .classes:
+        case .classes, .monster:
+            return [:]
+        case .monsters(let challengeRatings):
+            if let ratings = challengeRatings {
+                let ratingsString = ratings.map { String($0) }.joined(separator: ",")
+                return ["challenge_rating": ratingsString]
+            }
             return [:]
         }
     }
 
     private func getIsAccessTokenRequired() -> Bool {
         switch self {
-        case .classes:
+        case .classes, .monsters, .monster:
             return false
         }
     }
 
     private func getIsRefreshTokenRequest() -> Bool {
         switch self {
-        case .classes:
+        case .classes, .monsters, .monster:
             return false
         }
     }
 
     private func getBaseURL() -> URL {
         switch self {
-        case .classes:
+        case .classes, .monsters, .monster:
             return URL(string: "https://www.dnd5eapi.co")!
         }
     }
@@ -58,33 +66,45 @@ extension DNDAPITarget: MUNAPITarget {
         switch self {
         case .classes:
             return "/api/2014/classes"
+        case .monsters:
+            return "/api/2014/monsters"
+        case .monster(let index):
+            return "/api/2014/monsters/\(index)"
         }
     }
 
     private func getMethod() -> Moya.Method {
         switch self {
-        case .classes:
+        case .classes, .monsters, .monster:
             return .get
         }
     }
 
     private func getTask() -> Moya.Task {
         switch self {
-        case .classes:
+        case .classes, .monster:
+            return .requestPlain
+        case .monsters(let challengeRatings):
+            if challengeRatings != nil {
+                return .requestParameters(
+                    parameters: getParameters(),
+                    encoding: URLEncoding.queryString
+                )
+            }
             return .requestPlain
         }
     }
 
     private func getHeaders() -> [String: String]? {
         switch self {
-        case .classes:
-            return [:]
+        case .classes, .monsters, .monster:
+            return ["Accept": "application/json"]
         }
     }
 
     private func getAuthorizationType() -> Moya.AuthorizationType? {
         switch self {
-        case .classes:
+        case .classes, .monsters, .monster:
             return nil
         }
     }

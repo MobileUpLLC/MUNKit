@@ -10,3 +10,4 @@ import munkit_example_core
 
 extension NetworkService: @retroactive Observable {}
 extension DNDClassesRepository: @retroactive Observable {}
+extension DNDMonstersRepository: @retroactive Observable {}

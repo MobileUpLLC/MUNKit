@@ -1,5 +1,5 @@
 //
-//  ReplicaSettings.swift
+//  SingleReplicaSettings.swift
 //  munkit
 //
 //  Created by Ilia Chub on 28.04.2025.
@@ -8,7 +8,7 @@
 import Foundation
 
 /// Configures behavior of a replica.
-public struct ReplicaSettings: Sendable {
+public struct SingleReplicaSettings: Sendable {
     /// Specifies how quickly fetched data will become stale
     let staleTime: TimeInterval
 

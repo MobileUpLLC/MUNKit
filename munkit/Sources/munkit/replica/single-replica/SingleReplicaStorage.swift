@@ -1,12 +1,12 @@
 //
-//  Storage.swift
+//  SingleReplicaStorage.swift
 //  MUNKit
 //
 //  Created by Natalia Luzyanina on 01.04.2025.
 //
 
 /// Interface for saving replica data to persistent storage.
-public protocol ReplicaStorage<T>: Sendable {
+public protocol SingleReplicaStorage<T>: Sendable {
     associatedtype T: Sendable
 
     /// Writes data to the storage.

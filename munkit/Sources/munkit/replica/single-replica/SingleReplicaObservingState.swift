@@ -8,13 +8,23 @@
 import Foundation
 
 /// Contains information about the observers of a replica.
-public struct ReplicaObservingState: Sendable {
+public struct SingleReplicaObservingState: Sendable, CustomStringConvertible {
     let observerIds: Set<UUID>
     let activeObserverIds: Set<UUID>
     let lastObservingTime: ReplicaLastObservingTime
 
+    public var description: String { getDescription() }
+
     /// The current observation status based on the number of observers.
-    var status: ObservingStatus {
+    var status: ObservingStatus { getStatus() }
+
+    private func getDescription() -> String {
+        return "observers: \(observerIds.count)"
+        + " active: \(activeObserverIds.count)"
+        + " observingSince: \(lastObservingTime)"
+    }
+
+    private func getStatus() -> ObservingStatus {
         if activeObserverIds.count > 0 {
             return .active
         } else if observerIds.count > 0 {
@@ -36,14 +46,21 @@ enum ObservingStatus {
 }
 
 /// Represents the time of the last observation of a replica.
-enum ReplicaLastObservingTime {
+enum ReplicaLastObservingTime: Sendable, Comparable, CustomStringConvertible {
     case never
     case timeInPast(Date)
     case now
-}
 
-extension ReplicaObservingState: CustomStringConvertible {
-    public var description: String {
-        "observers: \(observerIds.count), active: \(activeObserverIds.count), observingSince: \(lastObservingTime)"
+    var description: String { getDescription() }
+
+    private func getDescription() -> String {
+        switch self {
+        case .never:
+            return "NEVER"
+        case .now:
+            return "NOW"
+        case .timeInPast(let date):
+            return date.description(with: .current)
+        }
     }
 }

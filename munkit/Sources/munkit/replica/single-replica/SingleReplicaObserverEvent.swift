@@ -1,11 +1,11 @@
 //
-//  ReplicaObserverEvent.swift
+//  SingleReplicaObserverEvent.swift
 //  munkit
 //
 //  Created by Ilia Chub on 12.05.2025.
 //
 
-enum ReplicaObserverEvent {
+enum SingleReplicaObserverEvent {
     case observerAdded
     case observerRemoved
     case observerActivated

@@ -10,22 +10,23 @@ import Foundation
 actor SingleReplicaImplementation<T: Sendable>: SingleReplica {
     public let name: String
 
-    private let settings: ReplicaSettings
-    private let storage: (any ReplicaStorage<T>)?
+    var currentState: SingleReplicaState<T>
+
+    private let settings: SingleReplicaSettings
+    private let storage: (any SingleReplicaStorage<T>)?
     private let dataFetcher: @Sendable () async throws -> T
 
-    private var replicaState: ReplicaState<T>
-    private var observerStateStreams: [AsyncStreamBundle<ReplicaState<T>>] = []
-    private var dataClearingTask: Task<Void, Error>?
-    private var errorClearingTask: Task<Void, Error>?
-    private var cancelTask: Task<Void, Error>?
-    private var staleTask: Task<Void, Error>?
+    private var observerStateStreams: [UUID: AsyncStreamBundle<SingleReplicaState<T>>] = [:]
+    private var dataClearingTask: Task<Void, Never>?
+    private var errorClearingTask: Task<Void, Never>?
+    private var cancelTask: Task<Void, Never>?
+    private var staleTask: Task<Void, Never>?
     private var loadingTask: Task<Void, Never>?
 
     init(
         name: String,
-        settings: ReplicaSettings,
-        storage: (any ReplicaStorage<T>)?,
+        settings: SingleReplicaSettings,
+        storage: (any SingleReplicaStorage<T>)?,
         fetcher: @Sendable @escaping () async throws -> T
     ) {
         self.name = name
@@ -33,12 +34,12 @@ actor SingleReplicaImplementation<T: Sendable>: SingleReplica {
         self.storage = storage
         self.dataFetcher = fetcher
 
-        let observingState = ReplicaObservingState(
+        let observingState = SingleReplicaObservingState(
             observerIds: [],
             activeObserverIds: [],
             lastObservingTime: .never
         )
-        self.replicaState = ReplicaState(
+        self.currentState = SingleReplicaState(
             loading: false,
             data: nil,
             error: nil,
@@ -46,14 +47,15 @@ actor SingleReplicaImplementation<T: Sendable>: SingleReplica {
         )
     }
 
-    public func observe(activityStream: AsyncStream<Bool>) async -> ReplicaObserver<T> {
-        let stateStreamBundle = AsyncStream<ReplicaState<T>>.makeStream()
-        observerStateStreams.append(stateStreamBundle)
+    public func observe(activityStream: AsyncStream<Bool>) async -> SingleReplicaObserver<T> {
+        let stateStreamBundle = AsyncStream<SingleReplicaState<T>>.makeStream()
 
-        let observer = await ReplicaObserver<T>(
+        let observer = await SingleReplicaObserver<T>(
             activityStream: activityStream,
             stateStream: stateStreamBundle.stream,
         )
+
+        observerStateStreams[observer.observerId] = stateStreamBundle
 
         Task {
             for await event in observer.eventStream {
@@ -73,16 +75,16 @@ actor SingleReplicaImplementation<T: Sendable>: SingleReplica {
     }
 
     private func cancel() async {
-        guard replicaState.loading else { return }
+        guard currentState.loading else { return }
         loadingTask?.cancel()
-        var updatedState = replicaState
+        var updatedState = currentState
         updatedState.loading = false
         await updateState(updatedState)
     }
 
     private func emitObserverCountChangedIfNeeded(
-        from previousState: ReplicaObservingState,
-        to newState: ReplicaObservingState
+        from previousState: SingleReplicaObservingState,
+        to newState: SingleReplicaObservingState
     ) async {
         guard
             previousState.observerIds.count != newState.observerIds.count
@@ -91,7 +93,7 @@ actor SingleReplicaImplementation<T: Sendable>: SingleReplica {
             return
         }
 
-        var updatedState = replicaState
+        var updatedState = currentState
         updatedState.observingState = newState
         await updateState(updatedState)
 
@@ -106,16 +108,17 @@ actor SingleReplicaImplementation<T: Sendable>: SingleReplica {
     }
 
     private func setLoadingStateAndLoadData(skipLoadingIfFresh: Bool) async {
-        guard !replicaState.loading, !(skipLoadingIfFresh && replicaState.hasFreshData) else {
+        guard !currentState.loading, !(skipLoadingIfFresh && (currentState.data?.isFresh ?? false)) else {
             return
         }
 
-        var updatedState = replicaState
+        var updatedState = currentState
         updatedState.loading = true
         updatedState.error = nil
 
         await updateState(updatedState)
 
+        loadingTask?.cancel()
         loadingTask = Task { [weak self] in await self?.loadData() }
     }
 
@@ -135,9 +138,9 @@ actor SingleReplicaImplementation<T: Sendable>: SingleReplica {
                 }
             }
 
-            let replicaData = ReplicaData(value: data, isFresh: true, changingDate: .now)
+            let replicaData = SingleReplicaStateData(value: data, isFresh: true, changingDate: .now)
 
-            var updatedState = replicaState
+            var updatedState = currentState
             updatedState.loading = false
             updatedState.data = replicaData
             updatedState.error = nil
@@ -150,11 +153,13 @@ actor SingleReplicaImplementation<T: Sendable>: SingleReplica {
             }
 
             staleTask?.cancel()
-            staleTask = Task { [weak self] in await self?.performDataStaling(after: staleTime) }
+            staleTask = Task { [weak self] in
+                await self?.performDataStaling(after: staleTime)
+            }
         } catch is CancellationError {
             return
         } catch {
-            var updatedState = replicaState
+            var updatedState = currentState
             updatedState.loading = false
             updatedState.error = error
 
@@ -162,43 +167,42 @@ actor SingleReplicaImplementation<T: Sendable>: SingleReplica {
         }
     }
 
-    private func clearData(removeFromStorage: Bool) async throws {
-        var updatedState = replicaState
+    private func clearData() async throws {
+        var updatedState = currentState
         updatedState.data = nil
         updatedState.error = nil
         await updateState(updatedState)
-
-        if removeFromStorage {
-            try await storage?.remove()
-        }
+        try await storage?.remove()
     }
 
-    private func updateState(_ newState: ReplicaState<T>) async {
-        logStateChange(from: replicaState, to: newState)
-        replicaState = newState
-        observerStateStreams.forEach { $0.continuation.yield(replicaState) }
+    private func updateState(_ newState: SingleReplicaState<T>) async {
+        logStateChange(from: currentState, to: newState)
+        currentState = newState
+        observerStateStreams.forEach { $0.value.continuation.yield(currentState) }
     }
 
     private func performDataClearing(after seconds: TimeInterval) async {
-        try? await Task.sleep(for: .seconds(seconds))
-        let replicaState = replicaState
+        do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
+
+        let currentState = currentState
 
         guard
-            (replicaState.data != nil || replicaState.error != nil),
-            !replicaState.loading,
-            case .none = replicaState.observingState.status
+            (currentState.data != nil || currentState.error != nil),
+            !currentState.loading,
+            case .none = currentState.observingState.status
         else {
             return
         }
 
-        try? await clearData(removeFromStorage: false)
+        try? await clearData()
     }
 
     private func performErrorClearing(after seconds: TimeInterval) async {
-        try? await Task.sleep(for: .seconds(seconds))
-        let replicaState = replicaState
+        do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
 
-        guard replicaState.error != nil, !replicaState.loading, case .none = replicaState.observingState.status else {
+        let currentState = currentState
+
+        guard currentState.error != nil, !currentState.loading, case .none = currentState.observingState.status else {
             return
         }
 
@@ -206,10 +210,11 @@ actor SingleReplicaImplementation<T: Sendable>: SingleReplica {
     }
 
     private func performCanceling(after seconds: TimeInterval) async {
-        try? await Task.sleep(for: .seconds(seconds))
-        let replicaState = replicaState
+        do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
 
-        guard replicaState.loading, case .none = replicaState.observingState.status else {
+        let currentState = currentState
+
+        guard currentState.loading, case .none = currentState.observingState.status else {
             return
         }
 
@@ -217,33 +222,47 @@ actor SingleReplicaImplementation<T: Sendable>: SingleReplica {
     }
 
     private func performDataStaling(after seconds: TimeInterval) async {
-        try? await Task.sleep(for: .seconds(settings.staleTime))
+        do { try await Task.sleep(for: .seconds(settings.staleTime)) } catch { return }
 
-        guard let data = replicaState.data, data.isFresh else {
+        guard let data = currentState.data, data.isFresh else {
             return
         }
 
-        var newData = replicaState.data
+        var newData = currentState.data
         newData?.isFresh = false
-        var updatedState = replicaState
+        var updatedState = currentState
         updatedState.data = newData
         await updateState(updatedState)
     }
 
     private func clearError() async {
-        var updatedState = replicaState
+        var updatedState = currentState
         updatedState.error = nil
         await updateState(updatedState)
     }
 
-    private func logStateChange(from oldState: ReplicaState<T>, to newState: ReplicaState<T>) {
+    private func logStateChange(from oldState: SingleReplicaState<T>, to newState: SingleReplicaState<T>) {
         var changes: [String] = []
 
         if oldState.loading != newState.loading {
             changes.append("loading: \(oldState.loading) → \(newState.loading)")
         }
-        if (oldState.data == nil) != (newState.data == nil) {
-            changes.append("data: \(oldState.data != nil ? "present" : "absent") → \(newState.data != nil ? "present" : "absent")")
+        if oldState.data?.changingDate != newState.data?.changingDate {
+            let oldValue: String
+            if let oldData = oldState.data {
+                oldValue = "present" + " since \(oldData.changingDate)"
+            } else {
+                oldValue = "absent"
+            }
+
+            let newValue: String
+            if let newData = newState.data {
+                newValue = "present" + " since \(newData.changingDate.description(with: .current))"
+            } else {
+                newValue = "absent"
+            }
+
+            changes.append("data: \(oldValue) → \(newValue)")
         }
         if oldState.error?.localizedDescription != newState.error?.localizedDescription {
             changes.append("error: \(oldState.error?.localizedDescription ?? "none") → \(newState.error?.localizedDescription ?? "none")")
@@ -254,8 +273,12 @@ actor SingleReplicaImplementation<T: Sendable>: SingleReplica {
         {
             changes.append("observing: \(oldState.observingState) → \(newState.observingState)")
         }
-        if oldState.hasFreshData != newState.hasFreshData {
-            changes.append("hasFreshData: \(oldState.hasFreshData) → \(newState.hasFreshData)")
+        if
+            let oldHasFreshData = oldState.data?.isFresh,
+            let newHasFreshData = newState.data?.isFresh,
+            oldHasFreshData != newHasFreshData
+        {
+            changes.append("hasFreshData: \(oldHasFreshData) → \(newHasFreshData)")
         }
 
         if changes.isEmpty {
@@ -268,7 +291,7 @@ actor SingleReplicaImplementation<T: Sendable>: SingleReplica {
         }
     }
 
-    private func handleObserverEvent(_ event: ReplicaObserverEvent, observerId: UUID ) async {
+    private func handleObserverEvent(_ event: SingleReplicaObserverEvent, observerId: UUID ) async {
         switch event {
         case .observerAdded:
             await handleObserverAdded(observerId: observerId)
@@ -284,8 +307,8 @@ actor SingleReplicaImplementation<T: Sendable>: SingleReplica {
     private func handleObserverAdded(observerId: UUID) async {
         [errorClearingTask, dataClearingTask, cancelTask].forEach { $0?.cancel() }
 
-        let currentObservingState = replicaState.observingState
-        let newObservingState = ReplicaObservingState(
+        let currentObservingState = currentState.observingState
+        let newObservingState = SingleReplicaObservingState(
             observerIds: currentObservingState.observerIds.union([observerId]),
             activeObserverIds: currentObservingState.activeObserverIds,
             lastObservingTime: currentObservingState.lastObservingTime
@@ -295,11 +318,14 @@ actor SingleReplicaImplementation<T: Sendable>: SingleReplica {
     }
 
     private func handleObserverRemoved(observerId: UUID) async {
-        let currentObservingState = replicaState.observingState
+        observerStateStreams[observerId]?.continuation.finish()
+        observerStateStreams[observerId] = nil
+
+        let currentObservingState = currentState.observingState
         let isLastActive = currentObservingState.activeObserverIds.count == 1
             && currentObservingState.activeObserverIds.contains(observerId)
         let updatedlastObservingTime = isLastActive ? .timeInPast(.now) : currentObservingState.lastObservingTime
-        let newObservingState = ReplicaObservingState(
+        let newObservingState = SingleReplicaObservingState(
             observerIds: currentObservingState.observerIds.subtracting([observerId]),
             activeObserverIds: currentObservingState.activeObserverIds.subtracting([observerId]),
             lastObservingTime: updatedlastObservingTime
@@ -331,10 +357,10 @@ actor SingleReplicaImplementation<T: Sendable>: SingleReplica {
     }
 
     private func handleObserverActivated(observerId: UUID) async {
-        let currentObservingState = replicaState.observingState
+        let currentObservingState = currentState.observingState
         var updatedActiveObserverIds = currentObservingState.activeObserverIds
         updatedActiveObserverIds.insert(observerId)
-        let newObservingState = ReplicaObservingState(
+        let newObservingState = SingleReplicaObservingState(
             observerIds: currentObservingState.observerIds,
             activeObserverIds: updatedActiveObserverIds,
             lastObservingTime: .now
@@ -344,11 +370,11 @@ actor SingleReplicaImplementation<T: Sendable>: SingleReplica {
     }
 
     private func handleObserverDeactivated(observerId: UUID) async {
-        let currentObservingState = replicaState.observingState
+        let currentObservingState = currentState.observingState
         let isLastActive = currentObservingState.activeObserverIds.count == 1
             && currentObservingState.activeObserverIds.contains(observerId)
         let updatedlastObservingTime = isLastActive ? .timeInPast(.now) : currentObservingState.lastObservingTime
-        let newObservingState = ReplicaObservingState(
+        let newObservingState = SingleReplicaObservingState(
             observerIds: currentObservingState.observerIds,
             activeObserverIds: currentObservingState.activeObserverIds.subtracting([observerId]),
             lastObservingTime: updatedlastObservingTime

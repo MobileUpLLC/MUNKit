@@ -13,8 +13,8 @@ struct FirstView: View {
             Color.white
                 .ignoresSafeArea()
             VStack {
-                LinkButton(title: "D&D Classes List 1", value: .dndClasses(.dndClassesList))
-                LinkButton(title: "D&D Classes List 2", value: .dndClasses(.dndClassesList))
+                LinkButton(title: "D&D Classes List", value: .dndClasses(.dndClassesList))
+                LinkButton(title: "D&D Monsters List", value: .dndMonsters(.dndMonstersList))
             }
         }
         .navigationTitle("munkit Example iOS")

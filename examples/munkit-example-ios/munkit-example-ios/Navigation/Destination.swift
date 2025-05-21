@@ -6,9 +6,15 @@
 //
 
 enum Destination: Hashable {
-    case dndClasses(DNDClassesListDestination)
+    case dndClasses(DNDClassesDestination)
+    case dndMonsters(DNDMonstersDestination)
 }
 
-enum DNDClassesListDestination: Hashable {
+enum DNDClassesDestination: Hashable {
     case dndClassesList
+}
+
+enum DNDMonstersDestination: Hashable {
+    case dndMonster(String)
+    case dndMonstersList
 }
